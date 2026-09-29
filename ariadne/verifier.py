@@ -194,6 +194,21 @@ def format_result(r) -> str:
     return "\n".join(lines)
 
 
+def trace_events(ledger, w3, uid) -> list:
+    """One unit's events as plain dicts (used by the web UI)."""
+    out = []
+    for name, a, block in _events(w3, ledger):
+        if a.get("unitId") != uid:
+            continue
+        e = {"event": name, "block": block, "ts": w3.eth.get_block(block).timestamp}
+        e.update({k: (wire.hx(v) if isinstance(v, (bytes, bytearray)) else v)
+                  for k, v in a.items() if k not in ("unitId", "buyerKey", "sellerKey", "receivableKey")})
+        if name == "MembershipChanged":
+            e["op"] = OPNAMES[a["op"]]
+        out.append(e)
+    return out
+
+
 def trace(pool_path: Path, rpc: str, unit_label: str) -> str:
     """One unit's journey from chain events (Act 1 of the demo)."""
     doc = json.loads(Path(pool_path).read_text())

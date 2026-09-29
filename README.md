@@ -23,13 +23,30 @@ git submodule update --init          # forge-std
 forge build                           # the verifier reads the ABI from out/
 forge test                            # contract attack tests + invariants
 python -m pytest tests -q             # engine, evidence, wire, and the full end-to-end demo
-python -m ariadne demo --seed A       # the whole story against a local Anvil chain
+python -m ariadne serve --open        # the web UI (start here): http://127.0.0.1:8000
+python -m ariadne demo --seed A       # the same story as a terminal run
 python -m ariadne demo --seed A --keep   # leave the chain up for live attacks
 python -m ariadne metrics             # detection metrics on seeds A/B/C + loop benchmark
 ```
 
 With a chain running: `ariadne attack stale-owner|duplicate|double-pool|bad-swap [--force]`, `ariadne lifecycle`,
 `ariadne verify runs/A/pool.json --rpc URL --report report.html`, `ariadne trace runs/A/pool.json P1:FU-000183`.
+
+## The web UI
+
+`python -m ariadne serve --open` starts a local server (stdlib only, no build step). Press **Start the demo** and it boots a local chain, deploys the contract, replays the units and builds the pool, showing each step. Then:
+
+| Page | What it shows |
+| --- | --- |
+| Pool | Verified / not verified banner, the ten checks, buyer concentration against the signed cap, the on-chain commitment, recent membership events |
+| Journey | Any unit's history read from chain events, starting with the hero invoice |
+| Attacks | Fire the three attacks; each shows the contract's revert and proof that chain state did not change |
+| Pool life | Settle, substitute, default, with re-verification after each; then the swap the engine refuses and the forced swap the verifier catches |
+| Evidence | Loop scores with their feature breakdown, review status, resolved buyer groups and the links behind them |
+| Units | Every factoring unit, searchable and filterable |
+| Report | The one-page trustee report |
+
+Every button sends a real transaction or runs the real verifier. Reset stops the chain and clears the session.
 
 ## What the demo shows (seed A)
 
@@ -59,7 +76,7 @@ Supporting: `wire.py` (identities, hashing, EIP-712), `generate.py` (seeded data
 ## Tests
 
 - Foundry: 12 attack and unit tests, plus invariant tests for spec invariants 1-7 (stateful fuzzing with hostile calls). A planted mutation (`livePoolOf` not cleared) is caught by the invariants.
-- pytest (25): one test per rule kind, fingerprint normalisation, JCS behaviour, evidence scoring on seeds A and C, generator determinism, and the full demo end to end on a temporary Anvil chain.
+- pytest (29): one test per rule kind, fingerprint normalisation, JCS behaviour, evidence scoring on seeds A and C, generator determinism, the web server's routes, and the full demo end to end on a temporary Anvil chain.
 
 ## Detection metrics (synthetic, measured, cut-off 700)
 
@@ -80,7 +97,7 @@ Loop enumeration is the hotspot: on a 30-node strongly connected component it go
 - The consortium secret is synthetic and public in `ariadne/wire.py`. A real deployment holds it privately and restricts chain reads.
 - A registrar that lies about its own units is trusted; damage is contained to that platform's units.
 - The verifier's attestation check re-runs the engine on each entry. The contract already rejects signatures that are not from the engine key, so the verifier does not decode calldata.
-- The prospectus compiler (AI layer), the polished UI and testnet deployment are not built.
+- The prospectus compiler (AI layer) and testnet deployment are not built.
 
 ## Honesty notes
 

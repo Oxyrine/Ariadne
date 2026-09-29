@@ -100,6 +100,9 @@ def main():
     s.set_defaults(fn=lambda a: {"stale-owner": originator.attack_stale_owner, "duplicate": originator.attack_duplicate,
                                  "double-pool": originator.attack_double_pool,
                                  "bad-swap": lambda c: originator.bad_swap(c, a.force)}[a.kind](_ctx(a)))
+    s = sub.add_parser("serve"); s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--anvil-port", type=int, default=8545); s.add_argument("--open", action="store_true")
+    s.set_defaults(fn=lambda a: __import__("ariadne.server", fromlist=["serve"]).serve(a.port, a.anvil_port, a.open))
     s = sub.add_parser("metrics"); s.set_defaults(fn=lambda a: say(__import__("ariadne.metrics", fromlist=["run"]).run()))
     s = sub.add_parser("lifecycle"); s.add_argument("--seed", default="A")
     s.add_argument("--rpc", default="http://127.0.0.1:8545"); s.set_defaults(fn=lambda a: originator.lifecycle(_ctx(a)))

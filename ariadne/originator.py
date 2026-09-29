@@ -32,15 +32,22 @@ def rkey_of(r):
     return wire.receivable_key(r["seller_gstin"], r["buyer_gstin"], r["invoice_no"], r["invoice_date"], r["amount_paise"])
 
 
-def say(*a): print(*a, flush=True)
+SINK = print          # the web server swaps this to capture log lines
+LAST = {}             # structured outcome of the last attack or swap
+RESULT = {}           # structured outcome of the last lifecycle action
+
+
+def say(*a): SINK(" ".join(str(x) for x in a))
 
 
 # ----------------------------------------------------------------- replay
 
-def setup(ch, units):
+def setup(ch, units, progress=None):
     """Register, finance and re-discount every unit on the chain (the synthetic registrars' history)."""
     f = ch.contract.functions
-    for r in units:
+    for i, r in enumerate(units):
+        if progress:
+            progress(i, len(units))
         uid = uid_of(r)
         ch.tx(f.registerUnit(uid, rkey_of(r), wire.epoch(r["invoice_date"]), wire.epoch(r["due_date"]),
                              r["amount_paise"], wire.party_key(r["buyer_gstin"]), wire.party_key(r["seller_gstin"])),
@@ -167,9 +174,11 @@ class Ctx:
 def _attack(ch, title, expect, action, uids, pids):
     say(f"\nATTACK: {title}")
     before = ch.snapshot(uids, pids)
+    LAST.clear()
     try:
         action()
         say("  !! NOT REJECTED")
+        LAST.update(title=title, error=None, ok=False, unchanged=False, expected=expect)
         return False
     except Exception as e:
         name = getattr(e, "name", None)
@@ -177,6 +186,9 @@ def _attack(ch, title, expect, action, uids, pids):
         after = ch.snapshot(uids, pids)
         ok = name == expect and before == after
         say(f"  state before == after: {before == after}   expected {expect}: {name == expect}")
+        LAST.update(title=title, error=name or str(e), args=[str(x) for x in getattr(e, "args_", [])],
+                    expected=expect, unchanged=before == after, ok=ok,
+                    blockBefore=before["block"], blockAfter=after["block"])
         return ok
 
 
@@ -243,6 +255,7 @@ def settle_some(ctx, limit=20):
             live = rest
             done += 1
     say(f"  settled {done} units; live members {len(live)}, largest group {engine.largest_group_bps(live, ctx.gm)} bps")
+    RESULT.update(settled=done, live=len(live), largestBps=engine.largest_group_bps(live, ctx.gm))
     return done
 
 
@@ -263,6 +276,8 @@ def substitute_good(ctx):
                                                    ctx.sign(inn, version)), "B")
             say(f"  substituted {label(ctx.rows[wire.unhx(out['unitId'])])} -> "
                 f"{label(ctx.rows[wire.unhx(inn['unitId'])])}: manifest v{version}, all rules pass")
+            RESULT.update(out=label(ctx.rows[wire.unhx(out["unitId"])]), into=label(ctx.rows[wire.unhx(inn["unitId"])]),
+                          version=version)
             return True
     return False
 
@@ -275,6 +290,7 @@ def default_one(ctx):
     reg = ch.names[ch.unit(uid)["registrar"]]
     ch.tx(ch.contract.functions.markDefault(uid), reg)
     say(f"  {label(ctx.rows[uid])} passed its due date and was marked DEFAULTED by {reg}")
+    RESULT.update(unit=label(ctx.rows[uid]), registrar=reg)
 
 
 def bad_swap(ctx, force=False):
@@ -286,11 +302,16 @@ def bad_swap(ctx, force=False):
             say(f"  swap {label(ctx.rows[wire.unhx(out['unitId'])])} -> {label(ctx.rows[wire.unhx(inn['unitId'])])}")
             for f in fails:
                 say(f"  ENGINE REFUSES: {f['rule']} {f['detail']}")
+            LAST.clear()
+            LAST.update(out=label(ctx.rows[wire.unhx(out["unitId"])]), into=label(ctx.rows[wire.unhx(inn["unitId"])]),
+                        fails=[{"rule": f["rule"], "kind": f["kind"], "detail": f["detail"]} for f in fails],
+                        forced=force, accepted=False)
             if not force:
                 return True
             version = ctx.version() + 1
             ch.tx(ch.contract.functions.substitute(ctx.pid, wire.unhx(out["unitId"]), wire.unhx(inn["unitId"]),
                                                    ctx.sign(inn, version)), "B")
+            LAST.update(accepted=True, version=version)
             say(f"  FORCED with the engine key: contract accepted it (manifest v{version}). Only the verifier can catch this.")
             return True
     say("  no rule-breaking swap candidate found")
