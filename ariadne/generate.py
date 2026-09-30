@@ -36,7 +36,8 @@ class World:
                 self.pans.add(p)
                 return p
 
-    def entity(self, name, state=None, pan=None, years=None, days=None, directors=None, address=None, gstin=None):
+    def entity(self, name, state=None, pan=None, years=None, days=None, directors=None, address=None, gstin=None,
+               rating="A"):
         rng = self.rng
         pan = pan or self._pan()
         g = gstin or f"{state or rng.choice(STATES)}{pan}1Z{_r(rng, 1, string.digits + string.ascii_uppercase)}"
@@ -51,7 +52,7 @@ class World:
         self.n_bank += 1
         reg = self.anchor - timedelta(days=days if days is not None else (years or rng.randint(6, 20)) * 365 + rng.randint(0, 200))
         self.entities[g] = {"name": name, "registered": reg.isoformat(), "directors": directors,
-                            "address": address, "bank": f"bank-{self.n_bank:06d}"}
+                            "address": address, "bank": f"bank-{self.n_bank:06d}", "rating": rating}
         return g
 
     def amount(self, lo=150_000, hi=900_000):
@@ -73,9 +74,10 @@ def make(seed: str, anchor: date = ANCHOR):
              "groups": [], "rediscounted": [], "reserve": {}}
 
     sellers = [w.entity(f"Seller {i}") for i in range(60)]
-    buyers = [w.entity(f"Buyer {i}") for i in range(40)]
+    buyers = [w.entity(f"Buyer {i}", rating="BBB" if i in (3, 17, 29) else rng.choice(["AAA", "AA", "AA-", "A+", "A", "A-"]))
+              for i in range(40)]
     hero_s = w.entity("Chennai MSME", gstin="33AAAPL1234C1Z5", pan="AAAPL1234C", years=9)
-    hero_b = w.entity("Karnataka Buyer", gstin="29BBBCM5678D1Z2", pan="BBBCM5678D", years=14)
+    hero_b = w.entity("Karnataka Buyer", gstin="29BBBCM5678D1Z2", pan="BBBCM5678D", years=14, rating="AA")
     w.pans |= {"AAAPL1234C", "BBBCM5678D"}
     sellers.append(hero_s)
     buyers.append(hero_b)
@@ -86,11 +88,14 @@ def make(seed: str, anchor: date = ANCHOR):
                       age() if callable(age) else age, tenor() if callable(tenor) else tenor, **kw)
                 for _ in range(n)]
 
-    regular = bg(96, lambda: rng.randint(75, 90), lambda: rng.randint(5, 30))
+    regular = bg(112, lambda: rng.randint(75, 90), lambda: rng.randint(5, 30))
     bg(8, 120, 20, tag="tenor_over")
     bg(8, 60, 50, tag="maturing")
     bg(3, 60, lambda: rng.randint(40, 44), tag="defaulter_candidate")
     bg(10, 90, lambda: rng.randint(5, 20), reserve=1, tag="reserve")
+    # three re-discounts (B>C>B): over the two-transfer limit, so R6 must refuse it
+    w.add(rng.choice(sellers), rng.choice(buyers[:3] + buyers[4:]), w.amount(), 12, 85, financier="A", path="B>C>B",
+          tag="transfers3")
     hero = w.add(hero_s, hero_b, 48_500_000, 58, 90, financier="A", path="B", tag="hero")
     # rediscount chain: hero + 20 A>B, 5 of them go on B>C (S5/S6)
     for u in rng.sample(regular, 25):
@@ -140,6 +145,7 @@ def make(seed: str, anchor: date = ANCHOR):
         g3 = w.entity("Group 3", state="29", directors=["DIN80000009"])
         g4 = w.entity("Group 4", state="07", directors=["DIN80000009"])
         grp = [g1, g2, g3, g4]
+        w.entities[g4]["bank"] = w.entities[g1]["bank"]  # a third strong link: the same bank account
     truth["groups"].append(grp)  # a true group in every seed, even when only a weak signal links it
     per_buyer = int(total * 0.30) // 4
     for g in grp:
@@ -153,6 +159,17 @@ def make(seed: str, anchor: date = ANCHOR):
     for x in ws:
         w.add(rng.choice(sellers), psu, int(total * 0.15 * x / sum(ws)), rng.randint(5, 30), rng.randint(75, 90), tag="s4")
     truth["psu"], truth["late"] = psu, late
+
+    # two firms whose only link is a shared registered address and near-identical names:
+    # a medium signal, so it becomes a candidate for a human to confirm, never an auto-merge
+    twins = [w.entity("Twin Traders Pvt Ltd", state="33", address="addr-twin-7000"),
+             w.entity("Twin Traders Private Limited", state="27", address="addr-twin-7000")]
+    for tw in twins:
+        ws = [rng.uniform(0.5, 1.5) for _ in range(5)]
+        for x in ws:
+            w.add(rng.choice(sellers), tw, int(total * 0.03 * x / sum(ws)), rng.randint(5, 30), rng.randint(75, 90), tag="twin")
+    truth["groups"].append(twins)
+    truth["candidates"] = [twins]
 
     # ---- platforms, unit numbers, invoice numbers (deterministic order)
     rng.shuffle(w.rows)
@@ -173,6 +190,7 @@ def make(seed: str, anchor: date = ANCHOR):
     t["hero"], t["late"] = label(hero), label(late)
     t["stale_owner_unit"] = t["rediscounted"][0]
     t["groups"] = [sorted(g) for g in truth["groups"] if g]
+    t["candidates"] = [sorted(c) for c in truth["candidates"]]
     t["reserve"] = [label(r) for r in w.rows if r["reserve"]]
     t["counts"] = {"units": len(w.rows), "entities": len(w.entities)}
     return w, t
@@ -187,9 +205,10 @@ def write(seed: str, out: Path, anchor: date = ANCHOR):
         wr.writerows(w.rows)
     with open(out / "entities.csv", "w", newline="") as f:
         wr = csv.writer(f)
-        wr.writerow(["gstin", "name", "pan", "registered", "directors", "address", "bank"])
+        wr.writerow(["gstin", "name", "pan", "registered", "directors", "address", "bank", "rating"])
         for g, e in w.entities.items():
-            wr.writerow([g, e["name"], g[2:12], e["registered"], "|".join(e["directors"]), e["address"], e["bank"]])
+            wr.writerow([g, e["name"], g[2:12], e["registered"], "|".join(e["directors"]), e["address"], e["bank"],
+                         e["rating"]])
     (out / "truth.json").write_text(json.dumps(truth, indent=1, default=str))
     (out / "meta.json").write_text(json.dumps({"seed": seed, "anchor": anchor.isoformat(), "synthetic": True}))
     return truth
@@ -205,5 +224,6 @@ def load(d: Path):
     entities = {}
     for r in csv.DictReader(open(d / "entities.csv")):
         entities[r["gstin"]] = {"name": r["name"], "registered": r["registered"],
-                                "directors": r["directors"].split("|"), "address": r["address"], "bank": r["bank"]}
+                                "directors": r["directors"].split("|"), "address": r["address"], "bank": r["bank"],
+                                "rating": r["rating"]}
     return units, entities, json.loads((d / "meta.json").read_text()), json.loads((d / "truth.json").read_text())

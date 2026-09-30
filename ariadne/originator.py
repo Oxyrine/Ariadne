@@ -16,10 +16,14 @@ RULES = {
         {"id": "R1", "kind": "state_required", "value": "FINANCED"},
         {"id": "R2", "kind": "tenor_max_days", "value": 90},
         {"id": "R3", "kind": "min_days_to_maturity", "value": 15},
-        {"id": "R4", "kind": "evidence_score_max", "value": 700},
-        {"id": "R5", "kind": "buyer_group_concentration_max_bps", "value": 1000, "basis": "resolved_group"},
+        {"id": "R4", "kind": "max_transfer_count", "value": 2},
+        {"id": "R5", "kind": "buyer_rating_min", "value": "A-"},
+        {"id": "R6", "kind": "evidence_score_max", "value": 700},
+        {"id": "R7", "kind": "buyer_group_concentration_max_bps", "value": 1000, "basis": "resolved_group"},
+        {"id": "R8", "kind": "seller_concentration_max_bps", "value": 500},
+        {"id": "R9", "kind": "min_pool_size", "value": 100},
     ],
-    "sourceClauses": {"R2": "4.2(a)", "R5": "4.3(b)"},
+    "sourceClauses": {"R2": "4.2(a)", "R7": "4.3(b)"},
     "unsupported": [],
 }
 
@@ -69,62 +73,120 @@ def view(ch, uid, state="FINANCED"):
 
 # -------------------------------------------------------------- pool build
 
-def review_evidence(ev):
-    """The human review step. The demo reviewer excludes every held unit; each is listed."""
-    held = {uid: "EXCLUDED" for uid, e in ev.items() if e["reviewStatus"] == "PENDING_REVIEW"}
-    for uid in held:
-        e = ev[uid]
-        say(f"  review: {e['label']} {e['cycleId']} score {e['evidenceScore']} {e['features']} -> EXCLUDED")
-    return evidence.review(ev, held)
+def default_group_decisions(ents):
+    """Demo reviewer policy: confirm a candidate merge only when legal names also match."""
+    cands = evidence.resolve_groups(ents)["candidates"]
+    return {c["id"]: ("CONFIRMED" if any("similar" in x for x in c["signals"]) else "REJECTED") for c in cands}
 
 
-def build_pool(ch, seed_dir: Path, name=POOL_NAME):
+def prepare(seed_dir: Path, review=None, group_decisions=None):
+    """Score evidence, resolve groups, apply the human review. review is {unitIdHex: EXCLUDED|CLEARED};
+    group_decisions is {candidateId: CONFIRMED|REJECTED}. None means the demo reviewer's defaults."""
     units, ents, meta, truth = generate.load(seed_dir)
-    ev, _ = evidence.score_units(units, ents, date.fromisoformat(meta["anchor"]))
+    ev, diag = evidence.score_units(units, ents, date.fromisoformat(meta["anchor"]))
+    if group_decisions is None:
+        group_decisions = default_group_decisions(ents)
+    gm = evidence.resolve_groups(ents, group_decisions)
+    ev = evidence.annotate(ev, units, gm)
+    held = {uid for uid, e in ev.items() if e["reviewStatus"] == "PENDING_REVIEW"}
+    if review is None:
+        review = {uid: "EXCLUDED" for uid in held}
+    ev = evidence.review(ev, {uid: d for uid, d in review.items() if uid in held})
+    return {"units": units, "ents": ents, "meta": meta, "truth": truth, "ev": ev, "gm": gm, "diag": diag,
+            "held": held, "group_decisions": group_decisions}
+
+
+def sign_rules(ch, name=POOL_NAME):
+    rs = engine.sign_ruleset({**RULES, "ruleSetId": name}, ch.key["rules"])
+    engine.validate_ruleset(rs)
+    return rs
+
+
+def eligible(ch, prep, rs, at=None):
+    """Units the B financier could put forward: owned by B, not held back as spares, passing every unit rule."""
+    at = at or ch.ts() + 60
+    out = []
+    for r in prep["units"]:
+        uid = uid_of(r)
+        v = view(ch, uid)
+        fails = engine.check_unit(rs, v, at, prep["ev"])
+        out.append({"row": r, "uid": uid, "view": v, "fails": fails,
+                    "ok": not fails and not r["reserve"] and v["owner"] == ch.acct["B"]})
+    return out
+
+
+def trim(members, gm, rs):
+    """Trim each concentration rule to 90% of its cap, smallest units first, until stable."""
+    caps = {r["kind"]: r["value"] * 9 // 10 for r in rs["rules"] if r["kind"].endswith("_bps")}
+    keyfs = []
+    if "buyer_group_concentration_max_bps" in caps:
+        keyfs.append((lambda m: engine.group_of(m, gm), caps["buyer_group_concentration_max_bps"]))
+    if "seller_concentration_max_bps" in caps:
+        keyfs.append((lambda m: m["sellerKey"], caps["seller_concentration_max_bps"]))
+    members, dropped = list(members), []
+    while True:
+        total = sum(m["amountPaise"] for m in members) or 1
+        for keyf, target in keyfs:
+            by = {}
+            for m in members:
+                by.setdefault(keyf(m), []).append(m)
+            g, ms = max(by.items(), key=lambda kv: sum(m["amountPaise"] for m in kv[1]))
+            if sum(m["amountPaise"] for m in ms) * 10_000 // total > target:
+                out = min(ms, key=lambda m: m["amountPaise"])
+                members.remove(out)
+                dropped.append(out)
+                break
+        else:
+            return members, dropped
+
+
+def propose(ch, seed_dir: Path, review=None, group_decisions=None, rs=None):
+    """Step 1 to 4 of the honest-pool workflow, without touching the chain's pool state."""
+    prep = prepare(seed_dir, review, group_decisions)
+    rs = rs or sign_rules(ch)
+    rows = eligible(ch, prep, rs)
+    return prep, rs, rows
+
+
+def build_pool(ch, seed_dir: Path, name=POOL_NAME, review=None, group_decisions=None, rs=None, progress=None):
+    prog = progress or (lambda *a: None)
+    prep = prepare(seed_dir, review, group_decisions)
+    ev, gm = prep["ev"], prep["gm"]
     say("Evidence scoring:")
-    ev = review_evidence(ev)
-    evdoc = evidence.evidence_doc(ev)
-    gm = evidence.resolve_groups(ents)
+    for uid in prep["held"]:
+        e = ev[uid]
+        say(f"  review: {e['label']} {e['cycleId']} score {e['evidenceScore']} -> {e['reviewStatus']}")
     for gid, g in gm["evidence"].items():
         say(f"  group {gid}: {len(g['members'])} GSTINs  links: {g['links']}")
-    rs = {**RULES, "ruleSetId": name}
-    rs = engine.sign_ruleset(rs, ch.key["rules"])
+    evdoc = evidence.evidence_doc(ev)
+    prog("rules", 0, 1)
+    rs = rs or sign_rules(ch, name)
     engine.validate_ruleset(rs)
     assert engine.ruleset_signer(rs)
     pid, rhash = wire.pool_id(name), wire.rules_hash(rs)
+    prog("pool", 0, 1)
     ch.tx(ch.contract.functions.createPool(pid, rhash, wire.content_hash(gm), wire.content_hash(evdoc)), "B")
 
     at = ch.ts() + 60
-    rows = {uid_of(r): r for r in units}
-    cands = []
-    for uid, r in rows.items():
-        v = view(ch, uid)
-        if r["reserve"] or v["owner"] != ch.acct["B"]:
-            continue
-        if not engine.check_unit(rs, v, at, ev):
-            cands.append(v)
+    prog("select", 0, 1)
+    rows = eligible(ch, prep, rs, at)
+    cands = [x["view"] for x in rows if x["ok"]]
     say(f"Eligible on unit rules: {len(cands)} of {len(rows)} units")
-
-    members = list(cands)
-    while True:  # trim the largest resolved group down to TARGET_BPS, smallest units first
-        total = sum(m["amountPaise"] for m in members)
-        by = {}
-        for m in members:
-            by.setdefault(engine.group_of(m, gm), []).append(m)
-        g, ms = max(by.items(), key=lambda kv: sum(m["amountPaise"] for m in kv[1]))
-        if sum(m["amountPaise"] for m in ms) * 10_000 // total <= TARGET_BPS:
-            break
-        members.remove(min(ms, key=lambda m: m["amountPaise"]))
-    say(f"After concentration trim: {len(members)} units, largest group "
-        f"{engine.largest_group_bps(members, gm)} bps")
-    assert not engine.check_pool(rs, members, gm), "trimmed pool still breaks a pool rule"
+    prog("trim", 0, 1)
+    members, dropped = trim(cands, gm, rs)
+    say(f"After concentration trim: {len(members)} units, largest group {engine.largest_group_bps(members, gm)} bps")
+    pool_fails = engine.check_pool(rs, members, gm, sealing=True)
+    if pool_fails:
+        raise ValueError("cannot seal: " + "; ".join(f"{f['rule']} {f['detail']}" for f in pool_fails))
 
     ledger = ch.contract.address
-    for m in members:
-        fails = engine.evaluate(rs, m, at, ev, members, gm)
+    for i, m in enumerate(members):
+        prog("attest", i, len(members))
+        fails = engine.evaluate(rs, m, at, ev, members, gm, sealing=True)
         assert not fails, fails
         sig = engine.attest(ch.key["engine"], ch.chain_id, ledger, wire.hx(pid), m, wire.hx(rhash), 0)
         ch.tx(ch.contract.functions.addToPool(pid, wire.unhx(m["unitId"]), sig), "B")
+    prog("seal", 0, 1)
     ch.tx(ch.contract.functions.sealPool(pid), "B")
     doc = {"poolId": wire.hx(pid), "ledger": ledger, "chainId": ch.chain_id, "rules": rs,
            "groupMap": gm, "evidence": evdoc, "synthetic": True}
@@ -240,16 +302,32 @@ def attack_double_pool(ctx):
 
 # --------------------------------------------------------------- lifecycle
 
+def _shares(members, gm):
+    """(buyer-group bps by key, seller bps by key) over live members."""
+    total = sum(m["amountPaise"] for m in members) or 1
+    g, sl = {}, {}
+    for m in members:
+        g[engine.group_of(m, gm)] = g.get(engine.group_of(m, gm), 0) + m["amountPaise"]
+        sl[m["sellerKey"]] = sl.get(m["sellerKey"], 0) + m["amountPaise"]
+    return ({k: v * 10_000 // total for k, v in g.items()}, {k: v * 10_000 // total for k, v in sl.items()})
+
+
 def settle_some(ctx, limit=20):
+    """Settle units whose removal keeps every concentration rule under 95% of its cap, taking units
+    from the most concentrated groups and sellers first."""
     ch, live = ctx.ch, ctx.live()
-    by = {}
-    for m in live:
-        by.setdefault(engine.group_of(m, ctx.gm), []).append(m)
-    order = [m for g in sorted(by, key=lambda g: -sum(x["amountPaise"] for x in by[g])) for m in by[g]]
+    caps = {r["kind"]: r["value"] * 95 // 100 for r in ctx.rs["rules"] if r["kind"].endswith("_bps")}
+    gcap = caps.get("buyer_group_concentration_max_bps", 10_000)
+    scap = caps.get("seller_concentration_max_bps", 10_000)
+    gs, ss = _shares(live, ctx.gm)
+    order = sorted(live, key=lambda m: -max(gs[engine.group_of(m, ctx.gm)] / gcap, ss[m["sellerKey"]] / scap))
     done = 0
     for m in order:
         rest = [x for x in live if x is not m]
-        if done < limit and rest and engine.largest_group_bps(rest, ctx.gm) <= SETTLE_BPS:
+        if not rest or done >= limit:
+            continue
+        g2, s2 = _shares(rest, ctx.gm)
+        if max(g2.values()) <= gcap and max(s2.values()) <= scap:
             reg = ch.names[ch.unit(wire.unhx(m["unitId"]))["registrar"]]
             ch.tx(ch.contract.functions.settle(wire.unhx(m["unitId"])), reg)
             live = rest
@@ -298,7 +376,7 @@ def bad_swap(ctx, force=False):
     with --force the engine key signs anyway (the compromised-key case) and the contract cannot tell."""
     ch = ctx.ch
     for out, inn, fails in _swap_candidates(ctx, largest_first=True):
-        if fails and {f["rule"] for f in fails} == {"R5"}:
+        if fails and "buyer_group_concentration_max_bps" in {f["kind"] for f in fails}:
             say(f"  swap {label(ctx.rows[wire.unhx(out['unitId'])])} -> {label(ctx.rows[wire.unhx(inn['unitId'])])}")
             for f in fails:
                 say(f"  ENGINE REFUSES: {f['rule']} {f['detail']}")

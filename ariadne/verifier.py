@@ -87,10 +87,10 @@ def verify(pool_path: Path, rpc: str):
             failures.append({"check": check, "unit": "(pool)" if uid == wire.ZERO32 else lab(uid), "rule": f["rule"], "kind": f["kind"],
                              "detail": f["detail"], "block": block})
 
-    def attest_check(uid, view, block, after):
+    def attest_check(uid, view, block, after, sealing=False):
         nonlocal att_total, att_bad
         att_total += 1
-        fails = engine.evaluate(rs, view, ts(block), ev, after, gm)
+        fails = engine.evaluate(rs, view, ts(block), ev, after, gm, sealing)
         if fails:
             att_bad += 1
             flag("ATTESTATIONS", uid, fails, block)
@@ -151,8 +151,8 @@ def verify(pool_path: Path, rpc: str):
             after = list(members[pid].values())
             for uid, b in deferred:
                 if uid in members[pid]:
-                    attest_check(uid, members[pid][uid], b, after)
-            pf = engine.check_pool(rs, after, gm)
+                    attest_check(uid, members[pid][uid], b, after, sealing=True)
+            pf = engine.check_pool(rs, after, gm, sealing=True)
             versions[1] = (block, pf, engine.largest_group_bps(after, gm))
             flag("POOL_RULES", b"\0" * 32, pf, block)
         elif name in ("UnitSettled", "UnitDefaulted") and a["unitId"] in ever:

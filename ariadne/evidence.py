@@ -6,7 +6,9 @@ resolution follows Lumine (strong-signal union-find). Both are reimplemented her
 
 Weights are hand-set constants, not trained: we have no labelled fraud data.
 """
+import re
 from datetime import date
+from itertools import combinations
 
 from . import wire
 
@@ -171,6 +173,7 @@ def score_units(units, entities, anchor: date, cutoff: int = CUTOFF):
         score, feats, cyc = best.get(id(u), (0, {}, None))
         out[uid] = {
             "unitId": uid, "label": f"{u['platform']}:{u['unit_no']}",
+            "buyerRating": entities[u["buyer_gstin"]].get("rating"),
             "evidenceScore": score, "features": feats, "cycleId": cyc,
             "reviewStatus": "PENDING_REVIEW" if score > cutoff else "NONE",
         }
@@ -196,9 +199,17 @@ def evidence_doc(evidence: dict, cutoff: int = CUTOFF) -> dict:
 
 # ------------------------------------------------------- entity resolution
 
-def resolve_groups(entities: dict):
-    """Union-find over strong links only: same PAN inside two GSTINs, shared director.
-    Returns the frozen group map for the pool. Buyers absent from the map are their own group."""
+def name_tokens(name: str) -> set:
+    n = re.sub(r"[^a-z0-9 ]", " ", name.lower())
+    return {t for t in n.split() if t not in {"pvt", "private", "ltd", "limited", "llp", "co", "the"}}
+
+
+def resolve_groups(entities: dict, decisions: dict | None = None):
+    """Buyer groups by union-find. Strong signals merge automatically: same PAN inside two GSTINs,
+    a shared director, a shared bank account. A shared registered address is a medium signal: it
+    creates a candidate that a human must confirm (similar legal names only add weight to it).
+    Buyers absent from the map are their own group."""
+    decisions = decisions or {}
     parent = {g: g for g in entities}
 
     def find(x):
@@ -207,16 +218,37 @@ def resolve_groups(entities: dict):
             x = parent[x]
         return x
 
-    reasons = {}  # signal -> members
-    for g in entities:
+    reasons = {}
+    for g, e in entities.items():
         reasons.setdefault(("same_pan", pan_of(g)), []).append(g)
-        for d in entities[g]["directors"]:
+        reasons.setdefault(("shared_bank", e["bank"]), []).append(g)
+        for d in e["directors"]:
             reasons.setdefault(("shared_director", d), []).append(g)
     links = []
     for (kind, val), gs in sorted(reasons.items()):
         if len(gs) > 1:
             gs = sorted(gs)
             links.append(f"{kind}:{val}:{','.join(gs)}")
+            for o in gs[1:]:
+                parent[find(o)] = find(gs[0])
+
+    by_addr = {}
+    for g, e in entities.items():
+        by_addr.setdefault(e["address"], []).append(g)
+    candidates = []
+    for addr, gs in sorted(by_addr.items()):
+        gs = sorted(gs)
+        if len(gs) < 2 or len({find(g) for g in gs}) == 1:
+            continue
+        cid = f"cand-{len(candidates) + 1:02d}"
+        toks = [name_tokens(entities[g]["name"]) for g in gs]
+        sim = min(len(a & b) / len(a | b) for a, b in combinations(toks, 2)) if all(toks) else 0
+        candidates.append({"id": cid, "members": gs, "link": f"shared_address:{addr}:{','.join(gs)}",
+                           "signals": ["shared registered address (medium)"]
+                           + (["similar legal names (weak)"] if sim >= 0.5 else []),
+                           "status": decisions.get(cid, "PENDING")})
+        if decisions.get(cid) == "CONFIRMED":
+            links.append(candidates[-1]["link"])
             for o in gs[1:]:
                 parent[find(o)] = find(gs[0])
 
@@ -230,4 +262,14 @@ def resolve_groups(entities: dict):
         ev[gid] = {"members": c, "links": [l for l in links if any(m in l.split(":")[2].split(",") for m in c)]}
         for g in c:
             groups[wire.hx(wire.party_key(g))] = gid
-    return {"groups": groups, "evidence": ev}
+    return {"groups": groups, "evidence": ev, "candidates": candidates}
+
+
+def annotate(ev: dict, units: list, gm: dict) -> dict:
+    """Add buyerGroupId and groupEvidence to each unit's evidence record (spec section 10 schema)."""
+    out = {}
+    by_label = {f"{u['platform']}:{u['unit_no']}": u for u in units}
+    for uid, e in ev.items():
+        gid = gm["groups"].get(wire.hx(wire.party_key(by_label[e["label"]]["buyer_gstin"])))
+        out[uid] = {**e, "buyerGroupId": gid, "groupEvidence": gm["evidence"][gid]["links"] if gid else []}
+    return out

@@ -75,13 +75,21 @@ def test_buyer_group_concentration_uses_resolved_group():
 def test_seller_concentration_and_min_pool_size():
     ms = [unit(unitId=f"0x{i}", sellerKey="0xs", amountPaise=100) for i in range(4)]
     assert engine.check_pool(rules(("seller_concentration_max_bps", 500)), ms, {"groups": {}})
-    assert engine.check_pool(rules(("min_pool_size", 5)), ms, {"groups": {}})
-    assert not engine.check_pool(rules(("min_pool_size", 4)), ms, {"groups": {}})
+    assert engine.check_pool(rules(("min_pool_size", 5)), ms, {"groups": {}}, sealing=True)
+    assert not engine.check_pool(rules(("min_pool_size", 4)), ms, {"groups": {}}, sealing=True)
+    # a closing condition only: later settlements shrinking the pool must not break it
+    assert not engine.check_pool(rules(("min_pool_size", 5)), ms, {"groups": {}})
 
 
 def test_unsupported_kind_is_refused():
     with pytest.raises(ValueError):
-        engine.validate_ruleset(rules(("buyer_rating_min", "A-")))
+        engine.validate_ruleset(rules(("made_up_kind", 1)))
+
+
+@pytest.mark.parametrize("grade,bad", [("AAA", False), ("A-", False), ("BBB+", True), (None, True)])
+def test_buyer_rating_min(grade, bad):
+    ev = {"0x01": {"evidenceScore": 0, "reviewStatus": "NONE", "buyerRating": grade}}
+    assert bool(failed(rules(("buyer_rating_min", "A-")), unit(), ev)) == bad
 
 
 def test_ruleset_signature_roundtrip_and_tamper():

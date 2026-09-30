@@ -12,10 +12,10 @@ from eth_account.messages import encode_typed_data
 from . import wire
 
 UNIT_KINDS = {"state_required", "tenor_max_days", "min_days_to_maturity", "max_transfer_count",
-              "evidence_score_max"}
+              "evidence_score_max", "buyer_rating_min"}
 POOL_KINDS = {"buyer_group_concentration_max_bps", "seller_concentration_max_bps", "min_pool_size"}
-# In the closed vocabulary but needs rating data the prototype does not have.
-UNIMPLEMENTED = {"buyer_rating_min"}
+# Synthetic rating scale, best first. Ratings travel inside the pinned evidence set.
+RATINGS = ["AAA", "AA+", "AA", "AA-", "A+", "A", "A-", "BBB+", "BBB", "BBB-", "BB", "B", "C", "D"]
 
 
 def validate_ruleset(ruleset: dict) -> None:
@@ -67,6 +67,13 @@ def check_unit(ruleset: dict, unit: dict, at_ts: int, evidence: dict) -> list:
         elif k == "max_transfer_count":
             if unit["transferCount"] > v:
                 fails.append(_fail(r, f"re-discounted {unit['transferCount']} times > {v}"))
+        elif k == "buyer_rating_min":
+            e = evidence.get(unit["unitId"]) or {}
+            g = e.get("buyerRating")
+            if g not in RATINGS:
+                fails.append(_fail(r, "buyer has no rating"))
+            elif RATINGS.index(g) > RATINGS.index(v):
+                fails.append(_fail(r, f"buyer rated {g}, below {v}"))
         elif k == "evidence_score_max":
             e = evidence.get(unit["unitId"])
             if e is None:
@@ -107,8 +114,9 @@ def group_of(unit: dict, group_map: dict) -> str:
     return group_map["groups"].get(unit["buyerKey"], unit["buyerKey"])
 
 
-def check_pool(ruleset: dict, members: list, group_map: dict) -> list:
-    """Pool rules over the live members of one manifest version."""
+def check_pool(ruleset: dict, members: list, group_map: dict, sealing: bool = False) -> list:
+    """Pool rules over the live members of one manifest version. min_pool_size is a closing
+    condition: it is checked only when the pool is sealed, not after later settlements."""
     fails = []
     for r in ruleset["rules"]:
         k = r["kind"]
@@ -116,17 +124,17 @@ def check_pool(ruleset: dict, members: list, group_map: dict) -> list:
             fails += _concentration(r, members, lambda m: group_of(m, group_map), "buyer group")
         elif k == "seller_concentration_max_bps":
             fails += _concentration(r, members, lambda m: m["sellerKey"], "seller")
-        elif k == "min_pool_size" and len(members) < r["value"]:
+        elif k == "min_pool_size" and sealing and len(members) < r["value"]:
             fails.append(_fail(r, f"{len(members)} units < {r['value']}"))
     return fails
 
 
-def evaluate(ruleset, unit, at_ts, evidence, pool_after, group_map) -> list:
+def evaluate(ruleset, unit, at_ts, evidence, pool_after, group_map, sealing=False) -> list:
     """Every failure that should stop an attestation for `unit` entering a pool whose
     live membership afterwards would be `pool_after`. Pool failures are kept only if
     they involve this unit, so the verdict is about this unit's entry."""
     fails = check_unit(ruleset, unit, at_ts, evidence)
-    fails += [f for f in check_pool(ruleset, pool_after, group_map)
+    fails += [f for f in check_pool(ruleset, pool_after, group_map, sealing)
               if not f["units"] or unit["unitId"] in f["units"]]
     return fails
 
