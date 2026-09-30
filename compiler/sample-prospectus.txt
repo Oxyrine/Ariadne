@@ -1,0 +1,10 @@
+Units must be FINANCED when admitted.
+Maximum invoice tenor is 90 days.
+Units must have at least 15 days remaining to maturity.
+Units must have no more than 2 transfers.
+Buyer rating must be A- or better.
+Maximum integrity ring score is 700.
+No resolved buyer group may exceed 10 percent of exposure.
+Seller concentration may not exceed 5 percent of exposure.
+The pool must contain at least 100 live units.
+The servicer shall use reasonable efforts to collect receivables.
