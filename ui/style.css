@@ -367,3 +367,5 @@ body.story .top nav, body.story .page-head { display: none; }
   .story-stage .card:has(> .ograph) { overflow-x: auto; }
   .ograph { min-width: 640px; }
 }
+.story-shell { grid-template-columns: minmax(0, 1fr); }
+.story-stage, .story-nav { min-width: 0; }
