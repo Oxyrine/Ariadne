@@ -560,7 +560,7 @@ async function boot() {
   window.addEventListener("hashchange", route);
   addEventListener("keydown", (e) => {
     if (S.mode !== "story" || /input|textarea|select/i.test(e.target.tagName)) return;
-    const n = +(location.hash.split("/")[1] || 0);
+    const n = +(location.hash.split("/")[2] || 0);
     if (e.key === "ArrowRight" && PAGES.storyGo) PAGES.storyGo(n + 1);
     if (e.key === "ArrowLeft" && PAGES.storyGo) PAGES.storyGo(n - 1);
   });
