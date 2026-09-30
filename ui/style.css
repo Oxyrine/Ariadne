@@ -360,3 +360,10 @@ body.story .top nav, body.story .page-head { display: none; }
   body { background: #fff; color: #000; }
   .card { border-color: #ccc; break-inside: avoid; }
 }
+
+/* phone: controls wrap instead of clipping; the ownership graph scrolls instead of shrinking */
+@media (max-width: 860px) {
+  .top-right { flex-wrap: wrap; flex: 1 1 100%; justify-content: flex-start; row-gap: 8px; }
+  .story-stage .card:has(> .ograph) { overflow-x: auto; }
+  .ograph { min-width: 640px; }
+}
