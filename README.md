@@ -34,19 +34,33 @@ With a chain running: `ariadne attack stale-owner|duplicate|double-pool|bad-swap
 
 ## The web UI
 
-`python -m ariadne serve --open` starts a local server (stdlib only, no build step). Press **Start the demo** and it boots a local chain, deploys the contract, replays the units and builds the pool, showing each step. Then:
+`python -m ariadne serve --open` starts a local server (stdlib only, no build step). Choose **a pool already built** or **build it yourself**. It boots a local chain, deploys the contract and replays the units, showing each step.
+
+Two modes share one design system, switchable in the header, with a light and a dark theme:
+
+- **Story** is the guided five-act demo: the problem, one invoice's journey (an ownership graph drawn from real events), the attacks, an honest pool, the trustee's check, rules from prose, and a closing line whose numbers are computed from your run. Arrow keys move between acts.
+- **Console** is the full workbench:
 
 | Page | What it shows |
 | --- | --- |
-| Pool | Verified / not verified banner, the ten checks, buyer concentration against the signed cap, the on-chain commitment, recent membership events |
+| Pool | Verified / not verified banner, the ten checks, buyer and seller concentration against the signed caps, the on-chain commitment, recent membership events |
 | Journey | Any unit's history read from chain events, starting with the hero invoice |
 | Attacks | Fire the three attacks; each shows the contract's revert and proof that chain state did not change |
-| Pool life | Settle, substitute, default, with re-verification after each; then the swap the engine refuses and the forced swap the verifier catches |
-| Evidence | Loop scores with their feature breakdown, review status, resolved buyer groups and the links behind them |
+| Life | Settle, substitute, default, with re-verification after each; then the swap the engine refuses and the forced swap the verifier catches |
+| Build | The six-step wizard: propose, pin the signed rules, evaluate every unit with reasons, review held loops, decide candidate merges, trim and seal |
+| Evidence | Loop diagrams and scores with feature breakdown, resolved buyer groups and the links behind them, candidate merges |
 | Units | Every factoring unit, searchable and filterable |
+| Compiler | Paste prospectus prose; a deterministic parser proposes rules with their source words, a person approves and signs |
+| Metrics | Guarantee metrics (should be zero), planted scenarios caught, detection metrics on seeds A, B, C, the loop benchmark |
+| Context | Where Ariadne sits next to CERSAI, MonetaGo and TReDS, the seven failures, architecture, the trust model |
+| Q&A | The sixteen judge questions, answered |
 | Report | The one-page trustee report |
 
 Every button sends a real transaction or runs the real verifier. Reset stops the chain and clears the session.
+
+**Rules.** The demo pool enforces all nine rule kinds from the spec: state, tenor, days to maturity, transfer count, buyer rating, evidence score, buyer-group concentration, seller concentration and minimum pool size (a closing condition, checked when the pool is sealed).
+
+**The compiler has no AI.** `ariadne/compiler.py` is a closed-grammar parser standing in for the spec's language-model layer. It keeps the guarantees that matter: every rule carries its verbatim source words, values are bounds-checked, anything unmapped is listed as unsupported rather than dropped, and nothing takes effect without a person's signature.
 
 ## What the demo shows (seed A)
 
@@ -56,10 +70,10 @@ Every button sends a real transaction or runs the real verifier. Reset stops the
 | B pools a unit it re-discounted to C | Reverts `NotOwner`, state unchanged |
 | Second platform registers the same invoice, reformatted | Reverts `DuplicateReceivable`, state unchanged |
 | B adds a unit already live in Pool 1 to Pool 2 | Reverts `AlreadyEncumbered`, state unchanged |
-| Build pool from 186 units | 149 pass unit rules; fabricated ring held for review and excluded; four-GSTIN group resolved and trimmed to 8.9%; 111 members sealed |
-| `ariadne verify` | `VERIFIED`: commitment replay (111 events), ownership 111/111, unique 111/111, attestations 111/111 agree |
-| 20 settlements, 1 good substitution (manifest v2), 1 default | Still `VERIFIED` (134 events replayed) |
-| Swap that breaks the 10% cap | Engine refuses (group at 1,597 bps). Forced with the engine key, the contract accepts it and the verifier turns red, naming unit, rule and block |
+| Build pool from 213 units | 168 pass the nine rules; fabricated ring held for review and excluded; the four-GSTIN group and the twin-firm candidate resolved; concentration trimmed under the caps; 122 members sealed |
+| `ariadne verify` | `VERIFIED`: commitment replay (122 events), ownership 122/122, unique 122/122, attestations 122/122 agree |
+| 18 settlements, 1 good substitution (manifest v2), 1 default | Still `VERIFIED` |
+| Swap that breaks the 10% cap | Engine refuses (buyer group at 2,148 bps against a 1,000 cap, and the seller cap too). Forced with the engine key, the contract accepts it and the verifier turns red, naming unit, rule and block |
 
 ## Architecture
 
@@ -68,7 +82,7 @@ Every button sends a real transaction or runs the real verifier. Reset stops the
 | 1. Lineage ledger | `contracts/src/AriadneLedger.sol` | Ownership, one live pool per `receivableKey`, membership commitment (computed on-chain) |
 | 2. Eligibility engine | `ariadne/engine.py` | Pure functions over a signed rule set; the verifier imports the same code |
 | 3. Evidence scoring | `ariadne/evidence.py` | Nothing. Tarjan SCC + bounded cycle search with a feature breakdown; union-find buyer groups |
-| 4. Prospectus compiler | not built | Optional in the prototype; a hand-signed rule file takes its place |
+| 4. Prospectus compiler | `ariadne/compiler.py` | Nothing. A deterministic parser (no AI in this build) proposes rules traced to source words for a person to sign |
 | 5. Investor verifier | `ariadne/verifier.py`, `report.py` | Nothing. Replays chain events and recomputes every check |
 
 Supporting: `wire.py` (identities, hashing, EIP-712), `generate.py` (seeded data), `originator.py` (replay, pool build, attacks, lifecycle), `chain.py` (Anvil + revert decoding), `metrics.py`. Frozen interface and deviations from the spec: [WIRE_PROTOCOL.md](WIRE_PROTOCOL.md).
@@ -76,7 +90,7 @@ Supporting: `wire.py` (identities, hashing, EIP-712), `generate.py` (seeded data
 ## Tests
 
 - Foundry: 12 attack and unit tests, plus invariant tests for spec invariants 1-7 (stateful fuzzing with hostile calls). A planted mutation (`livePoolOf` not cleared) is caught by the invariants.
-- pytest (29): one test per rule kind, fingerprint normalisation, JCS behaviour, evidence scoring on seeds A and C, generator determinism, the web server's routes, and the full demo end to end on a temporary Anvil chain.
+- pytest (40+): one test per rule kind, the buyer-rating rule, fingerprint normalisation, JCS behaviour, evidence scoring on seeds A and C, entity-resolution candidates, the prospectus compiler (fixture mapping, source-word enforcement, bounds), the web server's routes, and the full demo end to end on a temporary Anvil chain. CI runs `forge test` and `pytest` on every push.
 
 ## Detection metrics (synthetic, measured, cut-off 700)
 
@@ -85,9 +99,10 @@ Supporting: `wire.py` (identities, hashing, EIP-712), `generate.py` (seeded data
 | Fabricated-loop recall | 5/5 | 5/5 | 0/5 |
 | Legitimate-loop false positives | 0/4 | 0/4 | 0/4 |
 | Entity-resolution precision (pairs) | 16/16 | 16/16 | n/a (no merges) |
-| Entity-resolution recall (pairs) | 16/16 | 16/16 | 0/6 |
+| Entity-resolution recall (pairs), strong signals only | 16/17 | 16/17 | 0/7 |
+| Recall after the reviewer confirms candidate merges | 17/17 | 17/17 | 1/7 |
 
-Seed C is built to beat the heuristics: an asymmetric, slow, old-entity ring, and a group linked only by a shared address (a weak signal that must not auto-merge). It misses both, which is the point. Seeds A and B come from the same generator, so their similar results show the pipeline is not tuned to one draw, not that it generalises to real data. The score weights are hand-set constants; the cut-off is a signed policy choice.
+Seed C is built to beat the heuristics: an asymmetric, slow, old-entity ring, and a group linked only by a shared address. A shared address is a medium signal, so it becomes a candidate merge that a person must confirm; without that decision it stays split. Seed C misses both, which is the point. Seeds A and B come from the same generator, so their similar results show the pipeline is not tuned to one draw, not that it generalises to real data. The score weights are hand-set constants; the cut-off is a signed policy choice.
 
 Loop enumeration is the hotspot: on a 30-node strongly connected component it goes from 0.5 ms at 60 edges to 24 ms at 154 edges, where the 2,000-cycle cap starts to truncate. We bound cycle length at 6 and report the benchmark rather than claim linear scaling.
 
@@ -97,7 +112,9 @@ Loop enumeration is the hotspot: on a 30-node strongly connected component it go
 - The consortium secret is synthetic and public in `ariadne/wire.py`. A real deployment holds it privately and restricts chain reads.
 - A registrar that lies about its own units is trusted; damage is contained to that platform's units.
 - The verifier's attestation check re-runs the engine on each entry. The contract already rejects signatures that are not from the engine key, so the verifier does not decode calldata.
-- The prospectus compiler (AI layer) and testnet deployment are not built.
+- No language model is used anywhere. The compiler is a deterministic parser; the AI layer in the spec is described, not built.
+- Not built: a public testnet deployment, and a hosted read-only copy of the UI (the UI needs a local chain, so it runs on the demo machine).
+- Amendments and credit notes (a registrar-recorded change to the outstanding amount) are specified but not implemented; concentration uses face value.
 
 ## Honesty notes
 

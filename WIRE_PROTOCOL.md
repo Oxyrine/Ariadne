@@ -78,3 +78,10 @@ vocabulary but has no data in the prototype and is refused. Unit rules are evalu
   checked against the hash pinned in `PoolCreated`.
 - Evidence unit record: `unitId, label, evidenceScore, features, cycleId, reviewStatus (NONE | PENDING_REVIEW | CLEARED | EXCLUDED)`.
 - Group map: `{groups: {partyKeyHex: groupId}, evidence: {groupId: {members, links}}}`; a buyer absent from the map is its own group.
+
+## 6. Additions in v1.1
+
+- **Buyer rating** (`buyer_rating_min`): the rating travels inside each unit's evidence record as `buyerRating`, so it is covered by the pinned `evidenceHash`. The contract is unchanged. Scale, best first: AAA, AA+, AA, AA-, A+, A, A-, BBB+, BBB, BBB-, BB, B, C, D. A missing rating fails the rule.
+- **`min_pool_size`** is a closing condition: checked when the pool is sealed (and against the proposed sealed pool when units are attested before sealing), not after later settlements.
+- **Entity resolution.** Strong signals auto-merge: same PAN, shared director, shared bank account. A shared registered address creates a *candidate* (`cand-NN`) with status `PENDING`, `CONFIRMED` or `REJECTED`; only confirmed candidates merge. Similar legal names (token overlap of at least one half, ignoring company suffixes) only add weight to a candidate. The group map gains `candidates`. Each evidence record gains `buyerGroupId` and `groupEvidence`.
+- **Prospectus compiler** output: `{rules: [{id, kind, value, basis?, sourceSpan, readBack, ambiguities, status}], unsupported: [{span, reason}], aiUsed: false}`. `sourceSpan` must be a verbatim substring of the input. Approved rules are renumbered, and the signed set adds `sourceClauses` (rule id to source words), `unsupported` (clauses no rule covers) and `reviewedAt`.

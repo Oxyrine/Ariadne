@@ -27,8 +27,16 @@ async function api(path, body) {
   return j;
 }
 
-const S = { status: null, pool: null, units: null, evidence: null, verify: null, label: null, results: {}, seed: "A" };
-let token = 0, poll = null;
+const S = { status: null, pool: null, units: null, evidence: null, verify: null, label: null, results: {}, seed: "A", mode: "console" };
+let token = 0, poll = null, ROOT_EL = null;
+const PAGES = {};  // later scripts register pages here
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+const NEEDS_POOL = new Set(["pool", "journey", "attacks", "life", "evidence", "units", "report"]);
+(function theme() {
+  const t = store.get("ariadne-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  document.documentElement.dataset.theme = t;
+})();
+S.mode = store.get("ariadne-mode") || "console";
 
 const CHECKS = {
   RULES_PINNED: "Rules match the signed, pinned hash",
@@ -53,7 +61,8 @@ const ATTACKS = [
   { kind: "duplicate", title: "Register the same invoice twice", desc: "A second platform registers the hero invoice again, with different capitalisation and spacing." },
   { kind: "double-pool", title: "Put one receivable in two pools", desc: "B offers a unit that is already live in the first pool to a second pool." },
 ];
-const ROUTES = [["pool", "Pool"], ["journey", "Journey"], ["attacks", "Attacks"], ["life", "Pool life"], ["evidence", "Evidence"], ["units", "Units"], ["report", "Report"]];
+const ROUTES = [["pool", "Pool"], ["journey", "Journey"], ["attacks", "Attacks"], ["life", "Life"], ["build", "Build"], ["evidence", "Evidence"],
+  ["units", "Units"], ["compiler", "Compiler"], ["metrics", "Metrics"], ["context", "Context"], ["qa", "Q&A"], ["report", "Report"]];
 
 function ruleText(r) {
   const v = r.value;
@@ -81,29 +90,49 @@ function reveal() {
     io.observe(el);
   });
 }
-const setMain = (html) => { $("#main").innerHTML = html; reveal(); };
+const setMain = (html) => { (ROOT_EL || $("#main")).innerHTML = html; reveal(); };
 const failing = (v) => (v && v.status !== "VERIFIED" ? v.failed : []);
 
 /* ---------------------------------------------------------------- header */
 
+const SUN = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="8" cy="8" r="3"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></svg>';
+const MOON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 9.6A5.8 5.8 0 0 1 6.4 2.5a5.8 5.8 0 1 0 7.1 7.1z"/></svg>';
+
 function renderHeader() {
-  const st = S.status, ready = st && st.phase === "ready", cur = (location.hash.replace("#/", "") || "pool");
+  const st = S.status, ready = st && st.phase === "ready", hash = location.hash.replace("#/", "");
+  const cur = hash.split("/")[0] || (S.mode === "story" ? "story" : "pool");
+  document.body.classList.toggle("story", S.mode === "story");
   const nav = $("#nav");
-  nav.hidden = !ready;
+  nav.hidden = !ready || S.mode === "story";
   nav.innerHTML = ready ? ROUTES.map(([r, l]) => `<a href="#/${r}" ${cur === r ? 'aria-current="page"' : ""}>${l}</a>`).join("") : "";
-  let right = '<span class="tag yellow synth">Synthetic data</span>';
+  const dark = document.documentElement.dataset.theme === "dark";
+  let right = `<div class="seg-ctl" role="group" aria-label="Interface mode"><button aria-pressed="${S.mode === "story"}" data-mode="story">Story</button><button aria-pressed="${S.mode === "console"}" data-mode="console">Console</button></div>` +
+    `<button class="icon-btn" id="theme" aria-label="Switch to ${dark ? "light" : "dark"} theme" title="Theme">${dark ? SUN : MOON}</button>` +
+    '<span class="tag yellow synth">Synthetic data</span>';
   if (ready) {
     const v = S.verify;
     const vt = v ? (v.status === "VERIFIED" ? '<span class="tag green">Verified</span>' : '<span class="tag red">Not verified</span>') : '<span class="tag">Not checked</span>';
-    right = `<a href="#/pool" style="text-decoration:none">${vt}</a><span class="chainmeta">block ${st.block} · local chain</span>` + right +
-      '<button class="btn ghost small" id="reset">Reset</button>';
+    right = (S.snap ? "" : `<a href="#/pool" style="text-decoration:none">${vt}</a><span class="chainmeta">block ${st.block} · local chain</span>`) + right +
+      (S.snap ? "" : '<button class="btn ghost small" id="reset">Reset</button>');
   }
   $("#topright").innerHTML = right;
+  $$("[data-mode]").forEach((b) => b.onclick = () => {
+    S.mode = b.dataset.mode; store.set("ariadne-mode", S.mode);
+    location.hash = S.mode === "story" ? "#/story/0" : "#/pool";
+    route();
+  });
+  $("#theme").onclick = () => {
+    const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = t; store.set("ariadne-theme", t); renderHeader();
+  };
+  const bar = $("#snapbar");
+  bar.hidden = !S.snap;
+  if (S.snap) bar.innerHTML = `Recorded from a live run of seed ${esc(S.snap.meta.seed)} at ${esc(S.snap.meta.time)}, commit <code>${esc(S.snap.meta.commit)}</code>. Actions replay the recorded result; run it locally to fire them for real.`;
   const rs = $("#reset");
   if (rs) rs.onclick = async () => {
     if (!confirm("Stop the local chain and clear this session?")) return;
     await api("/api/reset", {});
-    S.pool = S.units = S.evidence = S.verify = null; S.results = {}; S.label = null;
+    S.pool = S.units = S.evidence = S.verify = S.metrics = null; S.results = {}; S.label = null;
     await refresh();
   };
 }
@@ -126,7 +155,8 @@ function landing() {
           <option value="C">Seed C: adversarial, expect misses</option>
         </select>
       </label>
-      <button class="btn" id="go">Start the demo ${icon("arrow")}</button>
+      <button class="btn" id="go">Start with a pool already built ${icon("arrow")}</button>
+      <button class="btn ghost" id="go2">Start and build the pool myself</button>
     </div>
     <p class="tl-m" style="margin-top:14px">Starts a local blockchain, deploys the contract and replays about 190 synthetic factoring units. It takes one to two minutes.</p>
   </section>
@@ -136,10 +166,12 @@ function landing() {
     <div class="card reveal"><h3>Ariadne does not claim</h3><p>That invoices reflect real goods, that it detects fraud, or that it replaces CERSAI or MonetaGo. Loop and group findings are evidence for a human.</p></div>
   </section>`);
   $("#seed").value = S.seed;
-  $("#go").onclick = async (e) => {
+  const go = (auto, nextHash) => async (e) => {
     S.seed = $("#seed").value;
-    await busy(e.currentTarget, async () => { S.status = await api("/api/start", { seed: S.seed }); startPolling(); route(); });
+    await busy(e.currentTarget, async () => { S.status = await api("/api/start", { seed: S.seed, auto }); if (nextHash) location.hash = nextHash; startPolling(); route(); });
   };
+  $("#go").onclick = go(true);
+  $("#go2").onclick = go(false, "#/build");
 }
 
 function progress() {
@@ -189,16 +221,18 @@ async function pagePool() {
     <div class="actions"><button class="btn ghost" id="reverify">Run verification again</button><a class="btn" href="/api/report" target="_blank" rel="noopener">Open trustee report</a></div></div></section>
   <section class="grid bento">
     <div class="card stat reveal"><div class="k">Live members</div><div class="v">${pool.members}</div><div class="s">${p.settled} settled · ${p.defaulted} defaulted since sealing</div></div>
-    <div class="card stat reveal"><div class="k">Manifest version</div><div class="v">v${pool.manifest}</div><div class="s">${pool.sealed ? "Sealed" : "Open"} · originator ${esc(pool.originator)}</div></div>
+    <div class="card stat reveal"><div class="k">${gloss("manifest", "Manifest version")}</div><div class="v">v${pool.manifest}</div><div class="s">${pool.sealed ? "Sealed" : "Open"} · originator ${esc(pool.originator)}</div></div>
     <div class="card stat reveal"><div class="k">Outstanding</div><div class="v">${inrShort(pool.totalPaise)}</div><div class="s">Face value of live members</div></div>
-    <div class="card reveal wide"><div class="k tl-m">Membership commitment, computed inside the contract</div>
+    <div class="card reveal wide"><div class="k tl-m">${gloss("commitment", "Membership commitment")}, computed inside the contract</div>
       <p class="hash" style="margin:10px 0 12px">${esc(pool.commitment)}</p>
       <button class="btn ghost small" id="copy">Copy</button></div>
     <div class="card reveal wide"><div class="tl-m" style="margin-bottom:10px">Signed rules pinned to this pool</div>
       ${pool.rules.map((r) => `<div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)"><span>${esc(ruleText(r))}</span><code>${esc(r.id)}</code></div>`).join("")}</div>
   </section>
-  <section class="reveal"><div class="sec-head"><div><h2>Buyer concentration</h2><p>The cap applies to each resolved group, not each GSTIN. A group hidden behind several identifiers is measured as one. Dashed line: ${pct(pool.capBps)} cap.</p></div></div>
+  <section class="reveal"><div class="sec-head"><div><h2>Buyer concentration</h2><p>The cap applies to each resolved group, not each GSTIN. A group hidden behind several identifiers is measured as one. Dashed line: ${pct(pool.capBps)} cap. ${pool.rulesSource === "compiled" ? "These rules were compiled from the prospectus and signed by a reviewer." : ""}</p></div></div>
     <div class="card"><div class="bars">${bars}</div></div></section>
+  ${pool.sellers && pool.sellers.length ? `<section class="reveal"><div class="sec-head"><div><h2>Seller concentration</h2><p>No single seller above ${pct(pool.sellerCapBps || 0)}.</p></div></div>
+    <div class="card"><div class="bars">${pool.sellers.map((g) => `<div class="barrow"><span>${esc(g.name)}</span><div class="track"><div class="fill ${g.bps > pool.sellerCapBps ? "over" : ""}" style="width:${(g.bps / Math.max(700, pool.sellerCapBps * 1.4)) * 100}%"></div><div class="cap" style="left:${(pool.sellerCapBps / Math.max(700, pool.sellerCapBps * 1.4)) * 100}%"></div></div><span class="num mono">${pct(g.bps)}</span></div>`).join("")}</div></div></section>` : ""}
   <section class="reveal"><div class="sec-head"><div><h2>Checks</h2><p>Historical checks use state at the block where each event happened, rebuilt from events.</p></div></div>
     <div class="card tablewrap"><table class="tbl"><thead><tr><th>Check</th><th>Id</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table>
     ${flags ? `<div class="flags"><h3>Flagged</h3>${flags}</div>` : ""}</div></section>
@@ -418,6 +452,8 @@ function pageReport() {
 
 /* ---------------------------------------------------------------- router */
 
+const fail = (e) => `<div class="err-box" role="alert">${esc(e.message)}<div class="retry"><button class="btn ghost small" onclick="route()">Retry</button></div></div>`;
+
 async function refreshHeader() {
   if (S.status && S.status.phase === "ready") { try { S.status = await api("/api/status"); } catch {} }
   renderHeader();
@@ -430,16 +466,23 @@ async function route() {
   renderHeader();
   if (!st || st.phase === "idle" || st.phase === "error") return landing();
   if (st.phase === "starting") return progress();
-  const cur = location.hash.replace("#/", "") || "pool";
-  const pages = { pool: pagePool, journey: pageJourney, attacks: pageAttacks, life: pageLife, evidence: pageEvidence, units: pageUnits, report: pageReport };
-  setMain('<p class="empty">Reading the chain...</p>');
-  try { await (pages[cur] || pagePool)(); } catch (e) { if (my === token) setMain(`<div class="err-box" role="alert">${esc(e.message)}</div>`); }
-  if (my === token) document.title = "Ariadne · " + (ROUTES.find((r) => r[0] === cur) || ROUTES[0])[1];
+  const hash = location.hash.replace("#/", "");
+  let cur = hash.split("/")[0] || (S.mode === "story" ? "story" : "pool");
+  if (cur === "story" && S.mode !== "story") { S.mode = "story"; store.set("ariadne-mode", "story"); renderHeader(); }
+  if (S.mode === "story" && !PAGES[cur] && cur !== "story") cur = "story";
+  ROOT_EL = null;
+  window.scrollTo(0, 0);
+  if (cur === "story") { try { await PAGES.story(+hash.split("/")[1] || 0, my); } catch (e) { if (my === token) setMain(fail(e)); } document.title = "Ariadne · Story"; return; }
+  if (NEEDS_POOL.has(cur) && !st.poolBuilt && !S.snap) { location.hash = "#/build"; return; }
+  setMain('<div class="skel"></div><div class="skel" style="margin-top:16px"></div>');
+  try { await (PAGES[cur] || PAGES.pool)(); } catch (e) { if (my === token) setMain(fail(e)); }
+  if (my === token) document.title = "Ariadne · " + ((ROUTES.find((r) => r[0] === cur) || ROUTES[0])[1]);
 }
 
 async function refresh() {
   S.status = await api("/api/status");
   if (S.status.phase === "starting") startPolling();
+  if (S.status.phase === "ready" && !S.snap) { try { S.verify = S.status.poolBuilt ? await api("/api/verify", {}) : null; } catch {} }
   route();
 }
 
@@ -448,9 +491,29 @@ function startPolling() {
   poll = setInterval(async () => {
     try { S.status = await api("/api/status"); } catch { return; }
     if (S.status.phase === "starting") { progress(); return; }
-    clearInterval(poll); S.pool = S.units = S.evidence = S.verify = null; S.results = {}; route();
+    clearInterval(poll); S.pool = S.units = S.evidence = S.verify = S.metrics = null; S.results = {}; refresh();
   }, 800);
 }
 
-window.addEventListener("hashchange", route);
-refresh().catch((e) => setMain(`<div class="err-box" role="alert">Cannot reach the Ariadne server: ${esc(e.message)}</div>`));
+Object.assign(PAGES, { pool: pagePool, journey: pageJourney, attacks: pageAttacks, life: pageLife, evidence: pageEvidence, units: pageUnits, report: pageReport });
+
+function backToTop() {
+  const b = document.createElement("button");
+  b.className = "btn ghost small totop"; b.textContent = "Back to top";
+  b.onclick = () => window.scrollTo({ top: 0, behavior: "smooth" });
+  document.body.appendChild(b);
+  addEventListener("scroll", () => b.classList.toggle("show", scrollY > 700), { passive: true });
+}
+
+async function boot() {
+  backToTop();
+  window.addEventListener("hashchange", route);
+  addEventListener("keydown", (e) => {
+    if (S.mode !== "story" || /input|textarea|select/i.test(e.target.tagName)) return;
+    const n = +(location.hash.split("/")[1] || 0);
+    if (e.key === "ArrowRight" && PAGES.storyGo) PAGES.storyGo(n + 1);
+    if (e.key === "ArrowLeft" && PAGES.storyGo) PAGES.storyGo(n - 1);
+  });
+  try { await refresh(); } catch (e) { setMain(`<div class="err-box" role="alert">Cannot reach the Ariadne server: ${esc(e.message)}</div>`); }
+}
+window.addEventListener("DOMContentLoaded", boot);
