@@ -25,6 +25,7 @@ forge test                            # contract attack tests + invariants
 python -m pytest tests -q             # engine, evidence, wire, and the full end-to-end demo
 python -m ariadne serve --open        # the web UI (start here): http://127.0.0.1:8000
 python -m ariadne demo --seed A       # the same story as a terminal run
+python -m ariadne export              # record a live run into site/ (the hosted read-only copy)
 python -m ariadne demo --seed A --keep   # leave the chain up for live attacks
 python -m ariadne metrics             # detection metrics on seeds A/B/C + loop benchmark
 ```
@@ -33,6 +34,8 @@ With a chain running: `ariadne attack stale-owner|duplicate|double-pool|bad-swap
 `ariadne verify runs/A/pool.json --rpc URL --report report.html`, `ariadne trace runs/A/pool.json P1:FU-000183`.
 
 ## The web UI
+
+A read-only recording of a full run is published from `site/` by GitHub Pages (Settings, Pages, source: GitHub Actions), at `https://oxyrine.github.io/Ariadne/` once enabled. It carries a banner saying it is a recording, has a selector for three recorded states (sealed, after the lifecycle, after the forced swap), and re-hashes the membership events in your browser to check the commitment.
 
 `python -m ariadne serve --open` starts a local server (stdlib only, no build step). Choose **a pool already built** or **build it yourself**. It boots a local chain, deploys the contract and replays the units, showing each step.
 
@@ -113,7 +116,7 @@ Loop enumeration is the hotspot: on a 30-node strongly connected component it go
 - A registrar that lies about its own units is trusted; damage is contained to that platform's units.
 - The verifier's attestation check re-runs the engine on each entry. The contract already rejects signatures that are not from the engine key, so the verifier does not decode calldata.
 - No language model is used anywhere. The compiler is a deterministic parser; the AI layer in the spec is described, not built.
-- Not built: a public testnet deployment, and a hosted read-only copy of the UI (the UI needs a local chain, so it runs on the demo machine).
+- Not built: a public testnet deployment. The hosted copy is a recording, not a live chain: it replays a real run and recomputes the commitment in the visitor's browser, but cannot fire anything.
 - Amendments and credit notes (a registrar-recorded change to the outstanding amount) are specified but not implemented; concentration uses face value.
 
 ## Honesty notes

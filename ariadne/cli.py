@@ -110,6 +110,8 @@ def main():
     s = sub.add_parser("serve"); s.add_argument("--port", type=int, default=8000)
     s.add_argument("--anvil-port", type=int, default=8545); s.add_argument("--open", action="store_true")
     s.set_defaults(fn=lambda a: __import__("ariadne.server", fromlist=["serve"]).serve(a.port, a.anvil_port, a.open))
+    s = sub.add_parser("export"); s.add_argument("--seed", default="A"); s.add_argument("--out", default=str(ROOT / "site"))
+    s.set_defaults(fn=lambda a: __import__("ariadne.export", fromlist=["export"]).export(Path(a.out), a.seed))
     s = sub.add_parser("metrics"); s.set_defaults(fn=lambda a: say(__import__("ariadne.metrics", fromlist=["run"]).run()))
     s = sub.add_parser("lifecycle"); s.add_argument("--seed", default="A")
     s.add_argument("--rpc", default="http://127.0.0.1:8545"); s.set_defaults(fn=lambda a: originator.lifecycle(_ctx(a)))
