@@ -80,7 +80,7 @@ const NEEDS_POOL = new Set(["pool", "journey", "attacks", "life", "evidence", "u
   const t = store.get("ariadne-theme") || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   document.documentElement.dataset.theme = t;
 })();
-S.mode = store.get("ariadne-mode") || "console";
+S.mode = store.get("ariadne-mode") || "story";
 
 const CHECKS = {
   RULES_PINNED: "Rules match the signed, pinned hash",
