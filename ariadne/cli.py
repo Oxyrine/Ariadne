@@ -2,8 +2,15 @@
 Every number printed comes from the running system; all data is synthetic."""
 import argparse
 import json
+import sys
 from datetime import date
 from pathlib import Path
+
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 from . import chain, generate, originator, report, verifier, wire
 from .chain import ROOT
