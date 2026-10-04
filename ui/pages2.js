@@ -204,7 +204,7 @@ function buildProgress() {
     const items = stages.map(([k, name], i) => `<li class="${i < idx ? "done" : i === idx ? "now" : ""}"><span class="pip">${i < idx ? icon("check") : ""}</span>${esc(name)}<span class="d">${i === idx && b.n > 1 ? `${b.i} of ${b.n}` : ""}</span></li>`).join("");
     const pctDone = idx < 0 ? 0 : Math.round(((idx + (b.n > 1 ? b.i / b.n : 0)) / stages.length) * 100);
     setMain(`<div class="page-head"><span class="eyebrow">Building</span><h1>Attesting and sealing the pool</h1><p>Each unit gets a signed attestation and a transaction to the contract.</p></div>
-      <div class="card" style="max-width:640px"><div class="miniprog"><i style="width:${pctDone}%"></i></div><ul class="steps">${items}</ul>${b.error ? `<div class="err-box">${esc(b.error)}</div>` : ""}</div>`);
+      <div class="card" style="max-width:640px"><div class="miniprog"><i style="transform:scaleX(${pctDone / 100})"></i></div><ul class="steps">${items}</ul>${b.error ? `<div class="err-box">${esc(b.error)}</div>` : ""}</div>`);
   };
   draw();
   const t = setInterval(async () => {

@@ -18,7 +18,7 @@ const IC = {
   clock: '<circle cx="8" cy="8" r="6"/><path d="M8 5v3.5l2 1.5"/>', doc: '<path d="M4 2h6l3 3v9H4zM9.5 2v3.5H13"/>',
   minus: '<path d="M3 8h10"/>',
 };
-const icon = (n, size) => `<svg viewBox="0 0 16 16" ${size ? `width="${size}" height="${size}"` : ""} fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n]}</svg>`;
+const icon = (n, size) => `<svg viewBox="0 0 16 16" ${size ? `width="${size}" height="${size}"` : ""} fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n]}</svg>`;
 
 const REPORT = () => (S.snap ? "report.html" : "/api/report");
 
@@ -207,7 +207,7 @@ function landing() {
       <button class="btn" id="go">Start with a pool already built ${icon("arrow")}</button>
       <button class="btn ghost" id="go2">Start and build the pool myself</button>
     </div>
-    <p class="tl-m" style="margin-top:14px">Starts a local blockchain, deploys the contract and replays about 190 synthetic factoring units. It takes one to two minutes.</p>
+    <p class="tl-m" style="margin-top:14px">Starts a local blockchain, deploys the contract and replays about 210 synthetic factoring units, then builds the pool. It takes about three to four minutes.</p>
   </section>
   <section class="notes grid g3">
     <div class="card reveal"><h3>The contract prevents</h3><p>Pooling a receivable you no longer own, registering the same invoice twice, and putting one receivable in two pools. Each is refused on-chain.</p></div>
