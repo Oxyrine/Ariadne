@@ -35,7 +35,7 @@ With a chain running: `ariadne attack stale-owner|duplicate|double-pool|bad-swap
 
 ## The web UI
 
-A read-only recording of a full run is published from `site/` by GitHub Pages (Settings, Pages, source: GitHub Actions), at `https://oxyrine.github.io/Ariadne/` once enabled. It carries a banner saying it is a recording, has a selector for three recorded states (sealed, after the lifecycle, after the forced swap), and re-hashes the membership events in your browser to check the commitment.
+A read-only recording of a full run is published from `site/` as a static site on Vercel, at `https://ariadne-delta.vercel.app`. To update it, run `python -m ariadne export`, then redeploy `site/`. It carries a banner saying it is a recording, has a selector for three recorded states (sealed, after the lifecycle, after the forced swap), and re-hashes the membership events in your browser to check the commitment.
 
 `python -m ariadne serve --open` starts a local server (stdlib only, no build step). Choose **a pool already built** or **build it yourself**. It boots a local chain, deploys the contract and replays the units, showing each step.
 
